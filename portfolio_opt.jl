@@ -6,10 +6,10 @@
 #Pkg.add("DataFrames")
 #Pkg.add("Distributions")
 #Pkg.add("StatPlots")
-Pkg.update()
+#Pkg.update()
 #Pkg.add("CSV")
 
-using JuMP, Clp, Plots, GLPKMathProgInterface, DataFrames,
+using JuMP, Plots, GLPKMathProgInterface, DataFrames,
     Distributions, Random, StatPlots, CSV
 Path = dirname(Base.source_path());
 cr = 4000 #deficit cost
@@ -22,7 +22,7 @@ G       = convert(Array{Float64,1},IN_DATA[1:nGen,1]) #Gen. capacity (MW)
 c       = convert(Array{Float64,1},IN_DATA[1:nGen,2]) #Gen. costs ($/MWh)
 Gbus    = convert(Array{Int64,1}  ,IN_DATA[1:nGen,3]) #Bus address
 Gmin    = convert(Array{Float64,1},IN_DATA[1:nGen,8])
-usina = 3 #Gerador do qual se deseja maximizar a receita
+usina = 8 #Gerador do qual se deseja maximizar a receita
 # -----------------------------------------------------------------------------------
 
 #Transmission data
@@ -103,26 +103,7 @@ function main(d)
         Deficit  = getvalue(deficit)
         obj      = getobjectivevalue(dispatchmodel)
         cmo     =  getdual(Kirchhoff1pre)
-        #if k != 0
-        #  dualpos  = getdual(Kirchhoff1post)
-        #  costpos = sum(dualpos, 2)
-        #  totalcost = dual .+ costpos
-        #else
-        #  totalcost = dual
-        #end
-        #opCost = round(obj - cr*sum(Deficit),2) # original operating cost
-        #printReports(k, fd, fl, opCost, gen, resUp, resDn, flow, Deficit, aG, aL)
     end
-
-
-    #println("Status: $(status)")
-    #println("Process took: $(t) seconds")
-    #println("")
-
-
-    #close(fd)
-    #close(fl)
-
     return gen, cmo
 
 end # function main
@@ -135,7 +116,7 @@ demand_scen = zeros(nscen,12)
 
 for m=1:12
     Random.seed!(100+m)
-    demand_scen[:,m] = rand(Normal(dh[m],400), nscen)
+    demand_scen[:,m] = rand(Normal(dh[m],300), nscen)
 end
 
 dtrans = transpose(demand_scen)
@@ -151,17 +132,22 @@ cmo_tot = zeros(nscen*24,12)
     end
     global gen, cmo = main(d)
     gen_scen[s,:] = gen[usina,:]
-    cmo_scen[s,:] = cmo[1,:]
+    cmo_scen[s,:] = cmo[13,:]
     cmo_tot[((s-1)*24+1):s*24,:] = cmo[:,:]
 end
 
 plot(transpose(cmo_tot), legend = false,xlim = (1,12), xticks = 1:1:12)
 plot(transpose(cmo_scen), legend = false,xlim = (1,12), xticks = 1:1:12)
+CSV.write(Path * "\\cmo_tot.out", DataFrame(cmo_tot))
+CSV.write(Path * "\\cmo_barra23.out", DataFrame(cmo_scen))
+
 
 gen_scenall = vec(gen_scen)
 cmo_scenall = vec(cmo_scen)
 density(gen_scenall,xlim = (0,G[usina]+100))
 density(cmo_scenall, xlim = (0,1000))
+CSV.write(Path * "\\cmo_scen.out", DataFrame([1:1200,cmo_scenall]))
+CSV.write(Path * "\\gen_scen.out", DataFrame([1:1200,gen_scenall]))
 
 plot(transpose(gen_scen), legend = false, ylim = (0,G[usina]), xlim = (1,12), xticks = 1:1:12)
 plot(transpose(cmo_scen), legend = false, ylim = (0,1000), xlim = (1,12), xticks = 1:1:12)
@@ -189,6 +175,7 @@ Q_otimo = getvalue(Q)
 Z_otimo = getobjectivevalue(revenue_model)
 R_scen = getvalue(Z)
 plot(R_scen)
+CSV.write(Path * "\\R_alpha100.out", DataFrame([1:1200,R_scen]))
 
 #-----------------------------------------------
 # Construindo modelo de maximização de receita
@@ -233,7 +220,14 @@ function portfolio_opt(α,λ,P)
     return Q_opt, Z_obj_opt, Receita
 end
 
-Q_cvar, Z_cvar, Receita_cvar = portfolio_opt(0.3,0.4,P)
+Q_30, Z_30, Receita_30 = portfolio_opt(0.3,0.4,P)
+Q_50, Z_50, Receita_50 = portfolio_opt(0.5,0.4,P)
+Q_60, Z_60, Receita_60 = portfolio_opt(0.6,0.4,P)
+
+
+CSV.write(Path * "\\R_alpha30.out", DataFrame([1:1200,Receita_30]))
+CSV.write(Path * "\\R_alpha50.out", DataFrame([1:1200,Receita_50]))
+
 plot(Receita_cvar)
 density(Receita_cvar)
 
