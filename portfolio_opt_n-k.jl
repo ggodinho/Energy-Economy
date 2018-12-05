@@ -6,11 +6,12 @@
 #Pkg.add("DataFrames")
 #Pkg.add("Distributions")
 #Pkg.add("StatPlots")
+#Pkg.add("Combinatorics")
 #Pkg.update()
 #Pkg.add("CSV")
 
 using JuMP, Plots, GLPKMathProgInterface, DataFrames,
-    Distributions, Random, StatPlots, CSV
+    Distributions, Random, StatPlots, CSV, Combinatorics
 Path = dirname(Base.source_path());
 cr = 4000 #deficit cost
 
@@ -46,10 +47,22 @@ d       = zeros(nBus,T)
 #t = 0
 #gen = 0
 #cmo = 0
+nScen = 1
 
 for i in 1:nBus
     d[i,:] = d_perc[i] .* dh
 end
+
+scen   = collect(combinations(1:(nGen+nLin),1))
+nScen  = length(scen)
+#A_scen = ones(factorial(nGen+nLin)/factorial(nGen+nLin-k)/factorial(k),nGen+nLin)
+A_scen = ones(nScen,nGen+nLin)
+for i in 1:nScen
+  A_scen[i,i] = 0
+end
+
+aG      = A_scen[:,1:nGen]
+aL      = A_scen[:,(nGen+1):(nGen+nLin)]
 
 function main(d)
 
@@ -69,7 +82,10 @@ function main(d)
     @variable(dispatchmodel, g[i=1:nGen,t=1:T]>=0);
     @variable(dispatchmodel, f[l=1:nLin,t=1:T]);
     @variable(dispatchmodel, θ[b=1:nBus,t=1:T]);
-    @variable(dispatchmodel, deficit[i=1:nBus, t=1:T]>=0); #deficit added
+    @variable(dispatchmodel, deficitpost[i=1:nBus, k=1:nScen, t=1:T]>=0); #deficit added
+    @variable(dispatchmodel, gpost[i=1:nGen,k=1:nScen,t=1:T]>=0);
+    @variable(dispatchmodel, fpost[l=1:nLin,k=1:nScen,t=1:T]);
+    @variable(dispatchmodel, θpost[b=1:nBus,k=1:nScen,t=1:T]);
 
       #Defining constraints
 
@@ -78,15 +94,25 @@ function main(d)
     @constraints(dispatchmodel, begin
         Kirchhoff1pre[b=1:nBus, t=1:T], sum(g[i,t] for i in findall((collect(1:nGen).*(Gbus.==b)).>0)) +
                         sum(f[l,t] for l in findall((collect(1:nLin).*(to.==b)).>0)) -
-                        sum(f[l,t] for l in findall((collect(1:nLin).*(from.==b)).>0)) == d[b,t] - deficit[b,t]
+                        sum(f[l,t] for l in findall((collect(1:nLin).*(from.==b)).>0)) == d[b,t]
         GenMaxCapacity[i=1:nGen, t=1:T], g[i,t] <= G[i]
         GenMinCapacity[i=1:nGen, t=1:T], g[i,t] >= 0
         Kirchhoff2pre[i=1:nLin, t=1:T], f[i,t] == (θ[from[i],t] - θ[to[i],t]) / x[i]
         MaxTransCapacity[i=1:nLin, t=1:T], -F[i] <= f[i,t] <= F[i]
     end)
 
+    @constraints(dispatchmodel, begin
+        Kirchhoff1post[b=1:nBus,k=1:nScen, t=1:T], sum(gpost[i,k,t] for i in findall((collect(1:nGen).*(Gbus.==b)).>0)) +
+                        sum(fpost[l,k,t] for l in findall((collect(1:nLin).*(to.==b)).>0)) -
+                        sum(fpost[l,k,t] for l in findall((collect(1:nLin).*(from.==b)).>0)) + deficitpost[b,k,t] == d[b,t]
+        GenMaxPowerpost[i=1:nGen,k=1:nScen,t=1:T], gpost[i,k,t] <= aG[k,i]*(g[i,t])
+        GenMinPowerpost[i=1:nGen,k=1:nScen,t=1:T], gpost[i,k,t] >= aG[k,i]*(g[i,t])
+        Kirchhoff2post[i=1:nLin,k=1:nScen,t=1:T], fpost[i,k,t] == aL[k,i]*(θpost[from[i],k,t] - θpost[to[i],k,t]) / x[i]
+        MaxTransCapacitypost[i=1:nLin,k=1:nScen,t=1:T], -aL[k,i]*F[i] <= fpost[i,k,t] <= aL[k,i]*F[i]
+    end) # constraint
+
     #Objective function
-    @objective(dispatchmodel,Min, sum(sum((c[i]*g[i,t]) for i=1:nGen) + sum(cr*deficit[j,t] for j=1:nBus) for t=1:T))
+    @objective(dispatchmodel,Min, sum(sum((c[i]*g[i,t]) for i=1:nGen) + sum(sum(cr*deficitpost[j,k,t] for k=1:nScen) for j=1:nBus) for t=1:T))
 
     @show dispatchmodel
 
@@ -100,12 +126,14 @@ function main(d)
         gen      = getvalue(g)
         flow     = getvalue(f)
         ang      = getvalue(θ)
-        Deficit  = getvalue(deficit)
+        Deficit  = getvalue(deficitpost)
         obj      = getobjectivevalue(dispatchmodel)
         cmo     =  getdual(Kirchhoff1pre)
+    else
+        gen = zeros(12,12)
+        cmo = zeros(24,12)
     end
     return gen, cmo
-
 end # function main
 
 #--------------------------------------------------------
@@ -144,8 +172,8 @@ CSV.write(Path * "\\Results\\cmo_barra23.out", DataFrame(cmo_scen))
 
 gen_scenall = vec(gen_scen)
 cmo_scenall = vec(cmo_scen)
-density(gen_scenall,xlim = (0,G[usina]+100), legend = false)
-density(cmo_scenall, legend = false)
+density(gen_scenall,xlim = (0,G[usina]+100))
+density(cmo_scenall, xlim = (0,1000))
 CSV.write(Path * "\\Results\\cmo_scen.out", DataFrame([1:1200,cmo_scenall]))
 CSV.write(Path * "\\Results\\gen_scen.out", DataFrame([1:1200,gen_scenall]))
 
