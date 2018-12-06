@@ -220,13 +220,20 @@ function portfolio_opt(α,λ,P)
     return Q_opt, Z_obj_opt, Receita
 end
 
+Q_10, Z_10, Receita_10 = portfolio_opt(0.1,0.4,P)
 Q_30, Z_30, Receita_30 = portfolio_opt(0.3,0.4,P)
-Q_50, Z_50, Receita_50 = portfolio_opt(0.5,0.4,P)
-Q_60, Z_60, Receita_60 = portfolio_opt(0.6,0.4,P)
+Q_50, Z_50, Receita_50 = portfolio_opt(0.5,0.,P)
+Q_90, Z_90, Receita_90 = portfolio_opt(0.9,0.4,P)
+Q_70, Z_70, Receita_70 = portfolio_opt(0.7,0.4,P)
+Q_100, Z_100, Receita_100 = portfolio_opt(1,0.0,P)
 
-
+CSV.write(Path * "\\Results\\R_alpha10.out", DataFrame([1:1200,Receita_10]))
 CSV.write(Path * "\\Results\\R_alpha30.out", DataFrame([1:1200,Receita_30]))
 CSV.write(Path * "\\Results\\R_alpha50.out", DataFrame([1:1200,Receita_50]))
+CSV.write(Path * "\\Results\\R_alpha70.out", DataFrame([1:1200,Receita_70]))
+CSV.write(Path * "\\Results\\R_alpha90.out", DataFrame([1:1200,Receita_90]))
+CSV.write(Path * "\\Results\\R_alpha100.out", DataFrame([1:1200,Receita_100]))
+
 
 plot(Receita_50)
 density(Receita_50)
