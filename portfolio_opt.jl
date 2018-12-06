@@ -20,8 +20,7 @@ IN_DATA = CSV.read(Path * "/INPUT_GEN_IEEE_2.csv");
 nGen    = size(IN_DATA)[1]
 G       = convert(Array{Float64,1},IN_DATA[1:nGen,1]) #Gen. capacity (MW)
 c       = convert(Array{Float64,1},IN_DATA[1:nGen,2]) #Gen. costs ($/MWh)
-Gbus    = convert(Array{Int64,1}  ,IN_DATA[1:nGen,3]) #Bus address
-Gmin    = convert(Array{Float64,1},IN_DATA[1:nGen,8])
+Gbus    = convert(Array{Int64,1},IN_DATA[1:nGen,3]) #Bus address
 usina = 8 #Gerador do qual se deseja maximizar a receita
 # -----------------------------------------------------------------------------------
 
@@ -43,28 +42,16 @@ IN_DATA = CSV.read(Path * "/INPUT_DEMAND_v2.csv");
 T       = size(IN_DATA)[1]
 dh      = convert(Array{Float64,1},IN_DATA[1:T,1]) #Demand per month
 d       = zeros(nBus,T)
-#t = 0
-#gen = 0
-#cmo = 0
 
+#Calculando Demanda por barra
 for i in 1:nBus
     d[i,:] = d_perc[i] .* dh
 end
 
 function main(d)
 
-    #println("----------------------")
-    #println("Running dispatch model")
-    #println("----------------------")
-
-    # open output files -------------------
-    #fd = open(Path * "\\dispatch.out", "w")
-    #fl = open(Path * "\\flow.out"    , "w")
-    # -------------------------------------
-
-    #@time
-    #Optimization model - cooptimization of energy and reserves---------------------
-    dispatchmodel = Model(solver=GLPKSolverLP()); #Defines a optimization model
+    #Optimization model - cooptimization of energy ---------------------
+    dispatchmodel = Model(solver=GLPKSolverLP()); #Defines the optimization model
     #Defining decision variables
     @variable(dispatchmodel, g[i=1:nGen,t=1:T]>=0);
     @variable(dispatchmodel, f[l=1:nLin,t=1:T]);
@@ -72,8 +59,6 @@ function main(d)
     @variable(dispatchmodel, deficit[i=1:nBus, t=1:T]>=0); #deficit added
 
       #Defining constraints
-
-      # Pre-contingency constraints
       # --------------------------
     @constraints(dispatchmodel, begin
         Kirchhoff1pre[b=1:nBus, t=1:T], sum(g[i,t] for i in findall((collect(1:nGen).*(Gbus.==b)).>0)) +
@@ -86,15 +71,11 @@ function main(d)
     end)
 
     #Objective function
-    @objective(dispatchmodel,Min, sum(sum((c[i]*g[i,t]) for i=1:nGen) + sum(cr*deficit[j,t] for j=1:nBus) for t=1:T))
+    @objective(dispatchmodel,Min, sum(sum((c[i]*g[i,t]) for i=1:nGen) +
+                sum(cr*deficit[j,t] for j=1:nBus) for t=1:T))
 
-    @show dispatchmodel
-
-    #nconstr = MathProgBase.numconstr(dispatchmodel)
-
-    #Solve model
+        #Solve model
     status = solve(dispatchmodel)
-    #t = @elapsed
     #Getting decision variables
     if status == :Optimal
         gen      = getvalue(g)
@@ -110,8 +91,7 @@ end # function main
 
 #--------------------------------------------------------
 #Monte Carlo Simulation
-
-nscen = 100
+nscen = 100 #number of scenarios
 demand_scen = zeros(nscen,12)
 
 for m=1:12
@@ -139,8 +119,7 @@ end
 plot(transpose(cmo_tot), legend = false,xlim = (1,12), xticks = 1:1:12)
 plot(transpose(cmo_scen), legend = false,xlim = (1,12), xticks = 1:1:12)
 CSV.write(Path * "\\Results\\cmo_tot.out", DataFrame(cmo_tot))
-CSV.write(Path * "\\Results\\cmo_barra23.out", DataFrame(cmo_scen))
-
+CSV.write(Path * "\\Results\\cmo_barra13.out", DataFrame(cmo_scen))
 
 gen_scenall = vec(gen_scen)
 cmo_scenall = vec(cmo_scen)
@@ -151,8 +130,6 @@ CSV.write(Path * "\\Results\\gen_scen.out", DataFrame([1:1200,gen_scenall]))
 
 plot(transpose(gen_scen), legend = false, ylim = (0,G[usina]), xlim = (1,12), xticks = 1:1:12)
 plot(transpose(cmo_scen), legend = false, ylim = (0,1000), xlim = (1,12), xticks = 1:1:12)
-
-minimum(cmo_scenall)
 
 #-----------------------------------------------
 # Construindo modelo de maximização de receita
@@ -179,23 +156,6 @@ CSV.write(Path * "\\Results\\R_alpha100.out", DataFrame([1:1200,R_scen]))
 
 #-----------------------------------------------
 # Construindo modelo de maximização de receita
-# Com CVaR
-# α = 0.05
-#
-# revenue_cvar = Model(solver=GLPKSolverLP())
-# @variable(revenue_cvar, δ[i=1:nscen*12] >= 0)
-# @variable(revenue_cvar, Z)
-# @constraint(revenue_cvar, Receita_CVAR[s=1:nscen*12], δ[s] >= Z - R_scen[s])
-#
-# @objective(revenue_cvar, Max, Z - (sum(δ[s]/α for s=1:nscen*12)/(nscen*12)))
-#
-# status_rev_cvar = solve(revenue_cvar)
-#
-# Z_cvar = getvalue(Z)
-# Z_otimo = getobjectivevalue(revenue_cvar)
-
-#-----------------------------------------------
-# Construindo modelo de maximização de receita
 # Co-otimizando Com CVaR
 
 function portfolio_opt(α,λ,P)
@@ -217,31 +177,21 @@ function portfolio_opt(α,λ,P)
     Q_opt = getvalue(Q)
     Z_obj_opt = getobjectivevalue(revenue_opt)
     Receita = getvalue(R)
-    return Q_opt, Z_obj_opt, Receita
+    mean_Receita = mean(Receita)
+    return Q_opt, Z_obj_opt, Receita, mean_Receita
 end
 
-Q_10, Z_10, Receita_10 = portfolio_opt(0.1,0.4,P)
-Q_30, Z_30, Receita_30 = portfolio_opt(0.3,0.4,P)
-Q_50, Z_50, Receita_50 = portfolio_opt(0.5,0.,P)
-Q_90, Z_90, Receita_90 = portfolio_opt(0.9,0.4,P)
-Q_70, Z_70, Receita_70 = portfolio_opt(0.7,0.4,P)
-Q_100, Z_100, Receita_100 = portfolio_opt(1,0.0,P)
+Q_50, Z_50, Receita_50, R50_mean = portfolio_opt(0.5,0.4,P)
+Q_90, Z_90, Receita_90, R90_mean = portfolio_opt(0.9,0.4,P)
+Q_100, Z_100, Receita_100, R100_mean = portfolio_opt(1,0.0,P)
 
-CSV.write(Path * "\\Results\\R_alpha10.out", DataFrame([1:1200,Receita_10]))
-CSV.write(Path * "\\Results\\R_alpha30.out", DataFrame([1:1200,Receita_30]))
 CSV.write(Path * "\\Results\\R_alpha50.out", DataFrame([1:1200,Receita_50]))
-CSV.write(Path * "\\Results\\R_alpha70.out", DataFrame([1:1200,Receita_70]))
 CSV.write(Path * "\\Results\\R_alpha90.out", DataFrame([1:1200,Receita_90]))
 CSV.write(Path * "\\Results\\R_alpha100.out", DataFrame([1:1200,Receita_100]))
-
-
-plot(Receita_50)
-density(Receita_50)
 
 #-----------------------------------------------
 # Construindo modelo de maximização de receita
 # Otimizando para diferentes parâmetros de alpha e P
-
 tabela_neutro = zeros(41,2)
 tabela_risco1 = zeros(41,2)
 tabela_risco2 = zeros(41,2)
@@ -249,12 +199,12 @@ tabela_risco2 = zeros(41,2)
 λ = 0.4
 @time for α = 1:3
     if α == 2
-        α = 0.3
+        α = 0.9
         for P = 1:41
             P_ = P*5+145
-            Q_30, Z_30, Receita_30 = portfolio_opt(α,λ,P_)
+            Q_90, Z_90, Receita_90 = portfolio_opt(α,λ,P_)
             tabela_risco2[P,1] = P_
-            tabela_risco2[P,2] = Q_30/G[usina]
+            tabela_risco2[P,2] = Q_90/G[usina]
         end
     elseif α == 3
         α = 0.5
@@ -273,8 +223,6 @@ tabela_risco2 = zeros(41,2)
         end
     end
 end
-CSV.write(Path * "\\Results\\tabela_30%.out", DataFrame(tabela_risco2))
+CSV.write(Path * "\\Results\\tabela_90%.out", DataFrame(tabela_risco2))
 CSV.write(Path * "\\Results\\tabela_50%.out", DataFrame(tabela_risco1))
 CSV.write(Path * "\\Results\\tabela_neutro.out", DataFrame(tabela_neutro))
-
-maximum(cmo_tot)
